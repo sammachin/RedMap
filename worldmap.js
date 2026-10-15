@@ -8,6 +8,7 @@ module.exports = function(RED) {
     var compression = require("compression");
     var sockjs = require('sockjs');
     var sockets = {};
+    var globalHttpSetup = false;   // ensure global httpNode middleware/routes are only added once
     RED.log.info("Worldmap version: " + require('./package.json').version );
     // add the cgi module for serving local maps.... only if mapserv exists
     if (fs.existsSync((__dirname + '/mapserv'))) {
@@ -66,16 +67,22 @@ module.exports = function(RED) {
         //node.log("Serving "+__dirname+" as "+node.path);
         node.log("started at "+node.path);
         var clients = {};
-        RED.httpNode.get("/-worldmap3d-key",  RED.auth.needsPermission('worldmap3d.read'), function(req, res) {
-            if (process.env.MAPBOXGL_TOKEN) {
-                res.send({key:process.env.MAPBOXGL_TOKEN});
-            }
-            else {
-                node.error("No MapBox API key set");
-                res.send({key:''})
-            }
-        });
-        RED.httpNode.use(compression());
+        // These are global to RED.httpNode (not per-path) so only add them once per
+        // process, otherwise every deploy stacks another layer - which leaks a close
+        // listener on each response (MaxListenersExceededWarning from compression).
+        if (!globalHttpSetup) {
+            RED.httpNode.get("/-worldmap3d-key",  RED.auth.needsPermission('worldmap3d.read'), function(req, res) {
+                if (process.env.MAPBOXGL_TOKEN) {
+                    res.send({key:process.env.MAPBOXGL_TOKEN});
+                }
+                else {
+                    node.error("No MapBox API key set");
+                    res.send({key:''})
+                }
+            });
+            RED.httpNode.use(compression());
+            globalHttpSetup = true;
+        }
         RED.httpNode.use(node.path, express.static(__dirname + '/worldmap'));
         // RED.httpNode.use(node.path, express.static(__dirname + '/worldmap', {maxage:3600000}));
 
